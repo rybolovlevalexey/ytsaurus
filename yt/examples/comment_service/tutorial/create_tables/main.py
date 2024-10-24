@@ -3,13 +3,13 @@ import yt.wrapper as yt
 import argparse
 
 
-# Для того чтобы потом было удобнее создавать необходимый набор таблиц при тестировании,
-# выделяется обобщенная функция create_database, которая будет принимает функцию создания отдельной таблицы
-# как аргумент
+# In order to make it easier to create the necessary set of tables during testing,
+# a generalized create_database function is allocated, which will take the function of creating a separate
+# table as an argument
 def create_database(create_table):
-    # Создание таблицы topic_comments
-    # Чтобы сделать колонку ключевой, необходимо указать в схеме атрибут sort_order (поддерживается только ascending)
-    # Чтобы сделать колонку агрегирующей, необходимо указать в схеме функцию агрегации
+    # Creating a topic_comments table
+    # To make a column a key one, you must specify the sort_order attribute in the schema (only ascending is supported)
+    # To make a column aggregating, you must specify the aggregation function in the schema
     create_table(
         name="topic_comments",
         schema=[
@@ -26,9 +26,9 @@ def create_database(create_table):
         ],
     )
 
-    # Создание таблицы user_comments
-    # Чтобы сделать колонку вычисляемой, необходимо указать в схеме выражение от других ключевых колонок,
-    # которое окажется в ней записано
+    # Creating a user_comments table
+    # To make a column computable, you must specify an expression from other key columns in the schema,
+    # which will be written in it
     create_table(
         name="user_comments",
         schema=[
@@ -40,7 +40,7 @@ def create_database(create_table):
         ],
     )
 
-    # Создание таблицы topics
+    # Creating topics table
     create_table(
         name="topics",
         schema=[
@@ -51,35 +51,35 @@ def create_database(create_table):
     )
 
 
-# Функция для создания production базы данных
-# Для универсальности, функция create_replicated_table, передаваемая в create_database,
-# принимает минимум аргументов, а именно, название и схему, а все остальное берется из внешнего контекста
+# Function for creating production data base
+# For flexibility, the create_replicated_table function sent to create_database,
+# takes a minimum of arguments, namely, the name and the scheme, and everything else is taken from the external context
 def create_production_database(path, meta_cluster, replica_clusters, force):
     def create_replica(table_path, replica_path, replica_cluster, schema):
-        # Для взаимодействия с кластерами используется RPC proxy, что указывается в конфиге
+        # To interact with clusters, an RPC proxy is used, which is specified in the config
         meta_client = yt.YtClient(meta_cluster, config={"backend": "rpc"})
         replica_client = yt.YtClient(replica_cluster, config={"backend": "rpc"})
         if force:
             replica_client.remove(replica_path, force=True)
 
-        # Создание объекта реплики на мета-кластере: ссылки на таблицу-реплику, которая должна появиться на кластере replica_cluster
+        # Creating a replica object on a meta cluster: links to the replica table that should appear on the replica_cluster cluster
         replica_id = meta_client.create("table_replica", attributes={
             "table_path": table_path,
             "cluster_name": replica_cluster,
             "replica_path": replica_path,
         })
 
-        # Создание таблицы-реплики
-        # Для хранения данных будет использовться медиум SSD на что указывает атрибут primary_medium
+        # Creating a replica table
+        # The SSD medium will be used for data storage, as indicated by the primary_medium attribute
         replica_client.create("table", replica_path, ignore_existing=True, attributes={
             "schema": schema, "dynamic": True,
             "upstream_replica_id": replica_id,
             "primary_medium": "ssd_blobs",
         })
-        # Необходимо сразу примонтировать таблицы, чтобы иметь возможность читать и писать данные
-        # Параметр sync=True, позволяет синхронно дождаться монтирования таблицы
+        # It is necessary to mount the tables immediately in order to be able to read and write data
+        # The sync=True parameter allows you to synchronously wait for the table to be mounted
         replica_client.mount_table(replica_path, sync=True)
-        # Установка режима репликации таблицы
+        # Setting the table replication mode
         meta_client.alter_table_replica(replica_id, True, mode="async")
 
 
@@ -87,9 +87,9 @@ def create_production_database(path, meta_cluster, replica_clusters, force):
         table_path = "{}/{}".format(path, name)
         replica_path = "{}/{}_replica".format(path, name)
 
-        # Для взаимодействия с кластерами используется RPC proxy, что указывается в конфиге
+        # To interact with clusters, an RPC proxy is used, which is specified in the config
         client = yt.YtClient(meta_cluster, config={"backend": "rpc"})
-        # Обработка случай существования таблицы
+        # Handling the case of the existence of a table
         if client.exists(table_path):
             if not force:
                 print("Replicated table {} at cluster {} already exists; use option --force to recreate it".format(
@@ -98,21 +98,21 @@ def create_production_database(path, meta_cluster, replica_clusters, force):
                 return None
             client.remove(table_path, force=True)
 
-        # Создание реплицированной динамической таблицы
-        # Для хранения данных будет использовться медиум SSD на что указывает атрибут primary_medium
-        # Стоит включить автоматическое переключение синхронной реплики
-        # с помощью параметра enable_replicated_table_tracker:
-        # тогда одна из реплик автоматически будет поддерживаться синхронной
+        # Creating a replicated dynamic table
+        # The SSD medium will be used for data storage, as indicated by the primary_medium attribute
+        # It is worth enabling automatic synchronous replica switching
+        # using the enable_replicated_table_tracker parameter:
+        # then one of the replicas will automatically be kept synchronous
         client.create("replicated_table", table_path, attributes={
             "schema": schema, "dynamic": True,
             "primary_medium": "ssd_blobs",
             "replicated_table_options": {"enable_replicated_table_tracker": True},
         })
-        # Необходимо сразу примонтировать таблицы, чтобы читать и писать данные
-        # Параметр sync=True, позволяет синхронно дождаться монтирования таблицы
+        # It is necessary to mount tables immediately in order to read and write data
+        # The sync=True parameter allows you to synchronously wait for the table to be mounted
         client.mount_table(table_path, sync=True)
 
-        # Создание асинхронных реплик
+        # Creating asynchronous replics
         for replica_cluster in replica_clusters:
             create_replica(table_path, replica_path, replica_cluster, schema)
 
